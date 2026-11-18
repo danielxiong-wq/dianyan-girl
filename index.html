@@ -283,11 +283,21 @@ function spawn() {
     ents.push(g);
   }
 }
-function startLevel(n) {
+let retryUsed = false, lvScore = 0, lvSouls = 0, lvFever = 0;
+const BTN_RETRY = { x: 262, y: 322, w: 210, h: 54 }, BTN_END = { x: 488, y: 322, w: 210, h: 54 };
+const inBtn = b => mouse.x >= b.x && mouse.x <= b.x + b.w && mouse.y >= b.y && mouse.y <= b.y + b.h;
+function gameOver() {
+  state = 'over'; uiT = 0; mouse.down = false;
+  if (score > best) { best = score; try { localStorage.setItem('dianyan_best', best); } catch (e) {} }
+}
+function startLevel(n, retry) {
+  if (retry) { retryUsed = true; score = lvScore; totalSouls = lvSouls; feverGauge = lvFever; }
+  else { retryUsed = false; lvScore = score; lvSouls = totalSouls; lvFever = feverGauge; }
+  parts = []; pops = []; rings = [];
   level = n; souls = 0; target = 6 + n * 2; timeLeft = 45; energy = 100; overheat = 0; stunT = 0;
   combo = 0; comboT = 0; feverT = 0; ents = []; flying = []; spawnT = 0.2; state = 'play'; uiT = 0; paused = false;
   for (let i = 0; i < 3; i++) { spawn(); const e = ents[ents.length - 1]; const dx = R(150, 800) - e.x; e.x += dx; if (e.link) e.link.x += dx; }
-  pop(W / 2, 110, '第 ' + n + ' 关  目标 ' + target + ' 个灵魂', '#fff', 30, 2.2);
+  pop(W / 2, 110, '第 ' + n + ' 关' + (retry ? ' 重试' : '') + '  目标 ' + target + ' 个灵魂', '#fff', 30, 2.2);
 }
 function newGame() { score = 0; totalSouls = 0; maxCombo = 0; feverGauge = 0; startLevel(1); }
 
@@ -314,6 +324,7 @@ cv.addEventListener('pointerdown', e => {
   if (uiT < 0.7) return;
   if (state === 'menu' || state === 'over') newGame();
   else if (state === 'clear') startLevel(level + 1);
+  else if (state === 'fail') { if (inBtn(BTN_RETRY)) startLevel(level, true); else if (inBtn(BTN_END)) gameOver(); }
 });
 const release = () => { mouse.down = false; };
 cv.addEventListener('pointerup', release);
@@ -323,6 +334,7 @@ cv.addEventListener('contextmenu', e => e.preventDefault());
 function toggleMute() { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.6; }
 window.addEventListener('keydown', e => {
   if (e.key === 'm' || e.key === 'M') toggleMute();
+  if ((e.key === 'r' || e.key === 'R') && state === 'fail' && uiT >= 0.7) startLevel(level, true);
   if ((e.key === 'p' || e.key === 'P' || e.key === 'Escape') && state === 'play') { paused = !paused; mouse.down = false; }
 });
 
@@ -398,7 +410,7 @@ function update(dt) {
   // spawning
   spawnT -= dt;
   const cap = state === 'menu' ? 5 : 5 + level;
-  if (spawnT <= 0 && state !== 'over' && state !== 'clear') {
+  if (spawnT <= 0 && state !== 'over' && state !== 'clear' && state !== 'fail') {
     if (ents.filter(e => !e.hazard && e.st === 'walk').length < cap) spawn();
     spawnT = state === 'menu' ? 1.3 : Math.max(0.5, 1.5 - level * 0.12) * R(0.7, 1.3);
   }
@@ -451,7 +463,8 @@ function update(dt) {
     timeLeft = 0; mouse.down = false; uiT = 0;
     souls += flying.length; totalSouls += flying.length; flying = [];
     if (souls >= target) { state = 'clear'; score += souls * 20; sfx.win(); }
-    else { state = 'over'; sfx.lose(); if (score > best) { best = score; try { localStorage.setItem('dianyan_best', best); } catch (e) {} } }
+    else if (!retryUsed) { state = 'fail'; sfx.lose(); }
+    else { sfx.lose(); gameOver(); }
   }
 }
 
@@ -906,6 +919,7 @@ function drawHUD() {
   text(Math.ceil(timeLeft) + ' 秒', W / 2, 23, low ? 15 + Math.sin(time * 14) * 2 : 13, '#fff', 'center', 'rgba(40,10,60,.8)');
   text('魅力值 ' + score, W - 18, 22, 20, '#fff', 'right');
   text('最高 ' + Math.max(best, score), W - 18, 44, 12, 'rgba(255,255,255,.6)', 'right');
+  text(retryUsed ? '本关重试已用' : '本关可重试 1 次', 18, 44, 12, retryUsed ? 'rgba(255,255,255,.45)' : '#ffd1ef', 'left');
   // energy
   const ex = 18, ey = 548, ew = 210;
   text('⚡ 电力', ex, ey - 12, 13, '#7df3ff', 'left');
@@ -964,6 +978,23 @@ function drawOverlay() {
     text('灵魂奖励  +' + souls * 20, W / 2, y + 146, 18, '#ff8ad8');
     text('魅力值  ' + score, W / 2, y + 186, 26, '#7df3ff');
     blinkHint('点击进入第 ' + (level + 1) + ' 关', y + 244);
+  } else if (state === 'fail') {
+    const y = panel(500, 320);
+    text('差一点!', W / 2, y + 50, 40, '#ff8ad8', 'center', '#4a1050');
+    text('第 ' + level + ' 关还差 ' + Math.max(0, target - souls) + ' 个灵魂', W / 2, y + 100, 20, '#fff');
+    text('俘虏灵魂  ' + souls + ' / ' + target, W / 2, y + 134, 16, 'rgba(255,255,255,.75)');
+    text('本关还有 1 次重试机会，重试会回到本关开始时的魅力值', W / 2, y + 172, 14, '#ffd1ef');
+    ctx.globalAlpha = uiT < 0.7 ? 0.4 : 1;
+    for (const [b, label, c1, c2] of [[BTN_RETRY, '⚡ 重试本关', '#ff5fc4', '#ff9ad5'], [BTN_END, '结束结算', '#4a3a78', '#6a58a8']]) {
+      const hov = uiT >= 0.7 && inBtn(b), k = hov ? 3 : 0;
+      const g = ctx.createLinearGradient(0, b.y, 0, b.y + b.h); g.addColorStop(0, c2); g.addColorStop(1, c1);
+      ctx.save(); if (hov) { ctx.shadowColor = c2; ctx.shadowBlur = 22; }
+      ctx.fillStyle = g; rr(b.x - k, b.y - k, b.w + k * 2, b.h + k * 2, 16); ctx.fill(); ctx.restore();
+      ctx.strokeStyle = 'rgba(255,255,255,' + (hov ? 0.95 : 0.45) + ')'; ctx.lineWidth = 2; rr(b.x - k, b.y - k, b.w + k * 2, b.h + k * 2, 16); ctx.stroke();
+      text(label, b.x + b.w / 2, b.y + b.h / 2 + 1, 21, '#fff', 'center', 'rgba(40,8,60,.55)');
+    }
+    ctx.globalAlpha = 1;
+    text('按 R 键也可以重试', W / 2, y + 296, 12, 'rgba(255,255,255,.5)');
   } else if (state === 'over') {
     const y = panel(500, 340), rk = rankOf(score);
     text('时间到!', W / 2, y + 46, 36, '#ff8ad8', 'center', '#4a1050');
@@ -1027,6 +1058,7 @@ function frame(ts) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+if (/[?&]demo=fail/.test(location.search)) setTimeout(() => { newGame(); score = 860; souls = 5; timeLeft = 0; pops = []; state = 'fail'; uiT = 1; mouse.x = 367; mouse.y = 349; }, 600);
 if (/[?&]demo=1/.test(location.search)) setTimeout(() => {
   newGame(); feverGauge = 0.6; combo = 3; comboT = 3; score = 1230;
   setInterval(() => { const b = ents.find(e => !e.hazard && e.st === 'walk' && e.x > 100 && e.x < 860); if (b) { mouse.x = b.x; mouse.y = b.y - 69 * b.s; mouse.down = true; energy = 70; } }, 16);
